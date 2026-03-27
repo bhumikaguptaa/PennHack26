@@ -8,32 +8,32 @@ export function Navbar() {
     const { totalItems } = useCart();
 
     return (
-        <nav className="fixed w-full z-50 bg-[#f4dbd8]/90 backdrop-blur-md border-b border-[#eaccc8] transition-all duration-300">
+        <nav className="fixed w-full z-50 bg-[#d1fae5]/90 backdrop-blur-md border-b border-[#a7f3d0] transition-all duration-300">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-center h-20">
                     <div className="flex-shrink-0 flex items-center cursor-pointer">
                         <Link href="/" className="flex items-center gap-3">
-                            <img src="/cupcake-colored.svg" alt="Cupcake Logo" className="w-10 h-10" />
+                            {/* <img src="/cupcake-colored.svg" alt="Cupcake Logo" className="w-10 h-10" /> */}
                             <div className="flex flex-col items-center">
-                                <span className="font-playfair text-3xl text-[#1a1a1a] tracking-tight">Sweet Treat</span>
+                                <span className="font-playfair text-3xl text-[#1a1a1a] tracking-tight">Fresh Foods</span>
                                 <div className="flex flex-col items-center mt-[-4px]">
-                                    <span className="font-playfair text-sm tracking-[0.2em] font-medium uppercase text-[#1a1a1a]">Bakery</span>
-                                    <span className="font-playfair text-xs italic text-[#8a5a54] mt-0.5">~By Bhumika & Tej</span>
+                                    <span className="font-playfair text-sm tracking-[0.2em] font-medium uppercase text-[#1a1a1a]">Grocery</span>
+                                    <span className="font-playfair text-xs italic text-[#059669] mt-0.5">~Daily Essentials</span>
                                 </div>
                             </div>
                         </Link>
                     </div>
                     <div className="hidden md:flex flex-grow justify-center space-x-10 text-[#1a1a1a]">
-                        <Link href="/" className="hover:text-[#8a5a54] font-medium transition-colors">Home</Link>
-                        <Link href="/menu" className="hover:text-[#8a5a54] font-medium transition-colors">Menu</Link>
-                        <Link href="#" className="hover:text-[#8a5a54] font-medium transition-colors">Blog</Link>
-                        <Link href="#" className="hover:text-[#8a5a54] font-medium transition-colors">About us</Link>
+                        <Link href="/" className="hover:text-[#059669] font-medium transition-colors">Home</Link>
+                        <Link href="/menu" className="hover:text-[#059669] font-medium transition-colors">Shop</Link>
+                        <Link href="#" className="hover:text-[#059669] font-medium transition-colors">Recipes</Link>
+                        <Link href="#" className="hover:text-[#059669] font-medium transition-colors">About</Link>
                     </div>
-                    <div className="flex items-center space-x-6 text-[#1a1a1a]">
-                        <Link href="/checkout" className="group flex items-center hover:text-[#8a5a54] transition relative">
+                    <div className="flex flex-1 md:flex-none justify-end md:justify-start items-center space-x-6 text-[#1a1a1a]">
+                        <Link href="/checkout" className="group flex items-center hover:text-[#059669] transition relative">
                             <ShoppingBag className="h-6 w-6 stroke-[1.5]" />
                             {totalItems > 0 && (
-                                <span className="absolute -top-1 -right-2 bg-[#1a1a1a] text-[#f4dbd8] text-[10px] font-bold rounded-full h-5 w-5 flex items-center justify-center group-hover:bg-[#3a3a3a] transition">
+                                <span className="absolute -top-1 -right-2 bg-[#1a1a1a] text-[#d1fae5] text-[10px] font-bold rounded-full h-5 w-5 flex items-center justify-center group-hover:bg-[#3a3a3a] transition">
                                     {totalItems}
                                 </span>
                             )}
