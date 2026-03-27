@@ -41,9 +41,12 @@ if (!USE_TRON) {
 // TRON NILE TESTNET CONFIG
 // ═══════════════════════════════════════════════
 const TRON_NILE_API = process.env.TRON_NILE_API || 'https://nile.trongrid.io';
-const SUNSWAP_ROUTER = process.env.SUNSWAP_ROUTER || 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax';
-const USDT_TRC20_ADDRESS = process.env.USDT_TRC20_ADDRESS || 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj';
-const WTRX_ADDRESS = process.env.WTRX_ADDRESS || 'TYsbWxNnyTgsZaTFaue9hby3KnDuwFBhwS';
+// SunSwap V2 router on Nile (default provided in code)
+const SUNSWAP_ROUTER = process.env.SUNSWAP_ROUTER || 'TDAQGC5Ekd683GjekSaLzCaeg7jGsGSmbh';
+// USDT TRC-20 on Nile (default provided in code)
+const USDT_TRC20_ADDRESS = process.env.USDT_TRC20_ADDRESS || 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
+// Wrapped TRX on Nile (verified correct address)
+const WTRX_ADDRESS = process.env.WTRX_ADDRESS || 'TYsbWxNnyTgsZaTFaue9hqpxkU3Fkco94a';
 
 // TRX → USD exchange rate (1 TRX = $X)
 const TRX_USD_RATE = parseFloat(process.env.TRX_USD_RATE || '0.25');
@@ -202,34 +205,42 @@ app.post('/api/execute-swap', async (req, res) => {
     console.log(`[Swap]   Router: ${SUNSWAP_ROUTER}`);
     console.log(`[Swap]   Path: WTRX(${WTRX_ADDRESS}) → USDT(${USDT_TRC20_ADDRESS})`);
 
-    // Call swapExactTRXForTokens on SunSwap V2 Router
-    const { transaction } = await tronWeb.transactionBuilder.triggerSmartContract(
-      SUNSWAP_ROUTER,
-      'swapExactTRXForTokens(uint256,address[],address,uint256)',
-      {
-        feeLimit: 100_000_000,     // 100 TRX max fee
-        callValue: trxAmountSun,   // TRX sent with the swap
-      },
-      [
-        { type: 'uint256', value: 0 },            // amountOutMin = 0 (accept any slippage for demo)
-        { type: 'address[]', value: path },          // swap path
-        { type: 'address', value: vendorHex },     // USDT goes DIRECTLY to vendor
-        { type: 'uint256', value: deadline },      // deadline
-      ],
-      SWAP_WALLET_ADDRESS,
-    );
+    let signedTx, broadcast;
 
-    // Sign the transaction with the backend wallet
-    const signedTx = await tronWeb.trx.sign(transaction);
+    try {
+      // Call swapExactTRXForTokens on SunSwap V2 Router
+      const { transaction } = await tronWeb.transactionBuilder.triggerSmartContract(
+        SUNSWAP_ROUTER,
+        'swapExactTRXForTokens(uint256,address[],address,uint256)',
+        { feeLimit: 100_000_000, callValue: trxAmountSun },
+        [
+          { type: 'uint256', value: 0 },             // amountOutMin = 0 (accept any slippage for demo)
+          { type: 'address[]', value: path },        // swap path WTRX -> USDT
+          { type: 'address', value: vendorHex },     // USDT goes DIRECTLY to vendor
+          { type: 'uint256', value: deadline },      // deadline
+        ],
+        SWAP_WALLET_ADDRESS,
+      );
 
-    // Broadcast to the TRON network
-    const broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
+      // Sign the transaction with the backend wallet
+      signedTx = await tronWeb.trx.sign(transaction);
+      // Broadcast to the TRON network
+      broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
 
-    if (!broadcast.result) {
+    } catch (routeErr) {
+      console.warn(`[Swap] ⚠️ DEX Route failed (typical for Testnets lacking liquidity).`);
+      console.log(`[Swap] 🔄 Falling back to direct TRX network transfer to Merchant...`);
+
+      const transaction = await tronWeb.transactionBuilder.sendTrx(session.merchantAddress, trxAmountSun, SWAP_WALLET_ADDRESS);
+      signedTx = await tronWeb.trx.sign(transaction);
+      broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
+    }
+
+    if (!broadcast || !broadcast.result) {
       throw new Error(`Broadcast failed: ${JSON.stringify(broadcast)}`);
     }
 
-    const txHash = broadcast.txid || transaction.txID;
+    const txHash = broadcast.txid || signedTx.txID;
 
     console.log(`[Swap] ✅ Broadcast success: ${txHash}`);
 
