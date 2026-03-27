@@ -211,10 +211,10 @@ app.post('/api/execute-swap', async (req, res) => {
         callValue: trxAmountSun,   // TRX sent with the swap
       },
       [
-        { type: 'uint256',   value: 0 },            // amountOutMin = 0 (accept any slippage for demo)
+        { type: 'uint256', value: 0 },            // amountOutMin = 0 (accept any slippage for demo)
         { type: 'address[]', value: path },          // swap path
-        { type: 'address',   value: vendorHex },     // USDT goes DIRECTLY to vendor
-        { type: 'uint256',   value: deadline },      // deadline
+        { type: 'address', value: vendorHex },     // USDT goes DIRECTLY to vendor
+        { type: 'uint256', value: deadline },      // deadline
       ],
       SWAP_WALLET_ADDRESS,
     );

@@ -58,7 +58,7 @@ function encodeErc20Transfer(to: string, amountRaw: string): string {
   return `${ERC20_TRANSFER_SELECTOR}${paddedAddress}${amountHex}`;
 }
 
-const SERVER_URL = "http://10.104.84.121:3001";
+const SERVER_URL = "http://10.0.0.129:3001";
 const ENABLE_DEBUG_FLOW = false;
 
 type Phase = 'idle' | 'scanning' | 'received' | 'confirm' | 'signing' | 'success';
@@ -302,6 +302,7 @@ export default function NfcReceiver() {
       const data = await resp.json();
 
       if (!resp.ok) {
+        console.log(data)
         throw new Error(data.error || data.details || 'Swap failed');
       }
 
