@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -27,12 +27,20 @@ import NfcManager, { Ndef, NfcEvents, TagEvent } from 'react-native-nfc-manager'
 import { useProvider, useAccount } from '@reown/appkit-react-native';
 import { Accent } from '@/constants/theme';
 
+// ── TRON imports ──
+import { buildSwapTransaction, TronSwapPayload } from '@/utils/tronTxBuilder';
+import { launchTronLink, pollForTransaction } from '@/utils/tronlink';
+
 const txTimeoutPromise = (ms: number) =>
   new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('Transaction timed out. Please try again or check your wallet app.')), ms)
   );
 
 const { width: SCREEN_W } = Dimensions.get('window');
+
+// ── Feature flag — mirrors backend's USE_TRON ──
+// Set to true to use TRON path, false for Base Sepolia ERC-20
+const USE_TRON = true;
 
 // --- Types ---
 interface RLUSDPaymentPayload {
@@ -42,6 +50,12 @@ interface RLUSDPaymentPayload {
   amountRaw: string;
   amountUsd: number;
   chainId: number;
+}
+
+type PaymentPayload = TronSwapPayload | RLUSDPaymentPayload;
+
+function isTronPayload(p: PaymentPayload): p is TronSwapPayload {
+  return 'payment_amt' in p && 'source_currency' in p;
 }
 
 const ERC20_TRANSFER_SELECTOR = '0xa9059cbb';
@@ -54,7 +68,7 @@ function encodeErc20Transfer(to: string, amountRaw: string): string {
 const SERVER_URL = "http://10.104.84.121:3001";
 const ENABLE_DEBUG_FLOW = false;
 
-type Phase = 'idle' | 'scanning' | 'received' | 'confirm' | 'success';
+type Phase = 'idle' | 'scanning' | 'received' | 'confirm' | 'signing' | 'success';
 
 /* ── Pulse Ring ──────────────────────────────────────────── */
 const PulseRing = ({ delay, color, duration = 2400 }: { delay: number; color: string; duration?: number }) => {
@@ -186,11 +200,13 @@ const SwipeToPay = ({ onSwipe, label }: { onSwipe: () => void; label: string }) 
 
 /* ── Main Pay Screen ─────────────────────────────────────── */
 export default function NfcReceiver() {
-  const [payload, setPayload] = useState<RLUSDPaymentPayload | null>(null);
+  const [payload, setPayload] = useState<PaymentPayload | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [showWipe, setShowWipe] = useState(false);
+  const pollStartTime = useRef<number>(0);
 
+  // EVM wallet (used for old Base Sepolia path)
   const { provider } = useProvider();
   const { address, isConnected } = useAccount();
 
@@ -217,12 +233,26 @@ export default function NfcReceiver() {
         try {
           const text = Ndef.text.decodePayload(tag.ndefMessage[0].payload as unknown as Uint8Array);
           const data = JSON.parse(text);
-          if (data.type === 'RLUSD_PAY') {
-            setPayload(data);
+
+          // ── Detect payload type ──
+          if (USE_TRON && data.payment_amt && data.source_currency) {
+            // TRON DEX swap payload
+            const tronPayload: TronSwapPayload = {
+              payment_amt: data.payment_amt,
+              source_currency: data.source_currency,
+              destination_currency: data.destination_currency,
+              destination_wallet: data.destination_wallet,
+            };
+            setPayload(tronPayload);
+            setShowWipe(true);
+            setPhase('received');
+          } else if (data.type === 'RLUSD_PAY') {
+            // Old Base Sepolia ERC-20 payload
+            setPayload(data as RLUSDPaymentPayload);
             setShowWipe(true);
             setPhase('received');
           } else {
-            Alert.alert('Invalid Tag', 'This is not an RLUSD payment tag.');
+            Alert.alert('Invalid Tag', 'Unrecognized payment tag format.');
           }
         } catch (err) {
           console.error('Error parsing NDEF:', err);
@@ -264,14 +294,77 @@ export default function NfcReceiver() {
     setPhase('idle');
   };
 
-  const sendPayment = async () => {
-    if (!payload) return;
+  // ── TRON payment flow ──
+  const sendTronPayment = async () => {
+    if (!payload || !isTronPayload(payload)) return;
+
+    // For TRON, we don't need the EVM wallet — TronLink manages the address
+    // We use a placeholder caller address; TronLink will override with the real one
+    try {
+      setPhase('signing');
+
+      // Build the unsigned swap transaction
+      // Use a dummy caller address — TronLink will replace the owner_address
+      const dummyCaller = payload.destination_wallet; // use vendor as placeholder
+      const { transaction } = await buildSwapTransaction(payload, dummyCaller);
+
+      // Record the timestamp before launching TronLink
+      pollStartTime.current = Date.now();
+
+      // Launch TronLink for signing
+      const launched = await launchTronLink(transaction, 'CryptoPay');
+
+      if (!launched) {
+        Alert.alert(
+          'TronLink Not Found',
+          'Please install TronLink from Google Play Store and set up your wallet.',
+        );
+        setPhase('confirm');
+        return;
+      }
+
+      // Start polling for the broadcast transaction
+      // TronLink will sign and broadcast — we listen for it
+      const result = await pollForTransaction(
+        dummyCaller,
+        pollStartTime.current,
+        3000,
+        40, // 2 minutes max
+      );
+
+      if (result.found && result.txHash) {
+        setTxHash(result.txHash);
+        setPhase('success');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        // Notify backend
+        fetch(`${SERVER_URL}/api/verify-tron-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ txHash: result.txHash, terminal_id: 'term_01' }),
+        }).catch((err) => console.warn('TRON verify call failed:', err));
+      } else {
+        Alert.alert('Transaction Not Found', 'Could not detect a broadcast transaction. Please try again.');
+        setPhase('confirm');
+      }
+    } catch (error: any) {
+      console.error('TRON transaction error:', error);
+      Alert.alert('Transaction Failed', error?.message || 'Failed to process TRON transaction');
+      setPhase('confirm');
+    }
+  };
+
+  // ── Base Sepolia payment flow (old) ──
+  const sendEvmPayment = async () => {
+    if (!payload || isTronPayload(payload)) return;
+
     if (!isConnected || !provider || !address) {
       Alert.alert('Wallet Not Connected', 'Please connect your wallet on the Home tab first.');
       return;
     }
 
     try {
+      setPhase('signing');
       const fromAddress = address.includes(':') ? address.split(':').pop()! : address;
       const data = encodeErc20Transfer(payload.to, payload.amountRaw);
 
@@ -280,7 +373,7 @@ export default function NfcReceiver() {
           method: 'eth_sendTransaction',
           params: [{ from: fromAddress, to: payload.tokenAddress, data, value: '0x0', gas: '0x1D4C0' }],
         }),
-        txTimeoutPromise(60000) // 60 seconds
+        txTimeoutPromise(60000),
       ]);
 
       setTxHash(hash);
@@ -299,6 +392,35 @@ export default function NfcReceiver() {
     }
   };
 
+  // ── Unified send handler ──
+  const sendPayment = () => {
+    if (payload && isTronPayload(payload)) {
+      sendTronPayment();
+    } else {
+      sendEvmPayment();
+    }
+  };
+
+  // ── Display helpers ──
+  const getDisplayAmount = (): string => {
+    if (!payload) return '0.00';
+    if (isTronPayload(payload)) return `${payload.payment_amt} TRX`;
+    return `$${payload.amountUsd.toFixed(2)}`;
+  };
+
+  const getSwapInfo = (): string | null => {
+    if (!payload || !isTronPayload(payload)) return null;
+    return `${payload.source_currency} → USDT`;
+  };
+
+  const getExplorerUrl = (): string | null => {
+    if (!txHash) return null;
+    if (payload && isTronPayload(payload)) {
+      return `https://nile.tronscan.org/#/transaction/${txHash}`;
+    }
+    return `https://sepolia.basescan.org/tx/${txHash}`;
+  };
+
   /* ── Phase: Idle ── */
   const renderIdle = () => (
     <View style={styles.centeredFull}>
@@ -307,30 +429,40 @@ export default function NfcReceiver() {
           <View style={StyleSheet.absoluteFill}>
             {[0, 1, 2].map((i) => (
               <View key={i} style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
-                <PulseRing delay={i * 800} color={Accent.blue} />
+                <PulseRing delay={i * 800} color={USE_TRON ? '#FF0013' : Accent.blue} />
               </View>
             ))}
           </View>
-          <View style={styles.idleOrb}>
+          <View style={[styles.idleOrb, USE_TRON && { backgroundColor: '#FF0013', shadowColor: '#FF0013' }]}>
             <Text style={styles.orbNfcText}>NFC</Text>
           </View>
         </View>
       </Pressable>
       <Text style={styles.idleLabel}>Tap to Receive Payment</Text>
+      <Text style={styles.modeLabel}>{USE_TRON ? 'TRON · Nile Testnet' : 'Base Sepolia'}</Text>
 
       {/* Debug: skip NFC and test full flow with mock data */}
       {ENABLE_DEBUG_FLOW && (
         <Pressable
           style={styles.debugBtn}
           onPress={() => {
-            setPayload({
-              type: 'RLUSD_PAY',
-              tokenAddress: '0xbD84621010fF42EB5bF72872BE6ec6FE67Db546f',
-              to: '0x0000000000000000000000000000000000000001',
-              amountRaw: '5000000000000000000',
-              amountUsd: 5.00,
-              chainId: 84532,
-            });
+            if (USE_TRON) {
+              setPayload({
+                payment_amt: 50,
+                source_currency: 'TRX',
+                destination_currency: 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj',
+                destination_wallet: 'TYourVendorAddress',
+              });
+            } else {
+              setPayload({
+                type: 'RLUSD_PAY',
+                tokenAddress: '0xbD84621010fF42EB5bF72872BE6ec6FE67Db546f',
+                to: '0x0000000000000000000000000000000000000001',
+                amountRaw: '5000000000000000000',
+                amountUsd: 5.00,
+                chainId: 84532,
+              });
+            }
             setShowWipe(true);
             setPhase('received');
           }}
@@ -356,7 +488,7 @@ export default function NfcReceiver() {
           <Text style={styles.orbNfcText}>NFC</Text>
         </Animated.View>
       </View>
-      <Text style={styles.scanningLabel}>Hold near sender...</Text>
+      <Text style={styles.scanningLabel}>Hold near terminal...</Text>
       <Pressable style={styles.cancelBtn} onPress={cancelScan}>
         <Text style={styles.cancelText}>Cancel</Text>
       </Pressable>
@@ -369,8 +501,26 @@ export default function NfcReceiver() {
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Payment Request</Text>
         <View style={styles.summaryDivider} />
+
+        {/* Swap info for TRON */}
+        {getSwapInfo() && (
+          <View style={styles.swapBadge}>
+            <Text style={styles.swapBadgeText}>{getSwapInfo()}</Text>
+          </View>
+        )}
+
         <Text style={styles.summaryAmountLabel}>Amount</Text>
-        <Text style={styles.summaryAmount}>${payload!.amountUsd.toFixed(2)}</Text>
+        <Text style={styles.summaryAmount}>{getDisplayAmount()}</Text>
+
+        {/* Show destination info for TRON */}
+        {payload && isTronPayload(payload) && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.summaryAmountLabel}>Vendor</Text>
+            <Text style={styles.vendorAddress} numberOfLines={1} ellipsizeMode="middle">
+              {payload.destination_wallet}
+            </Text>
+          </View>
+        )}
       </View>
 
       {phase === 'confirm' ? null : (
@@ -384,9 +534,31 @@ export default function NfcReceiver() {
 
       {phase === 'confirm' && (
         <Animated.View entering={FadeIn.duration(300)} style={{ width: '100%', paddingHorizontal: 16 }}>
-          <SwipeToPay onSwipe={sendPayment} label={`Slide to Pay $${payload!.amountUsd.toFixed(2)}`} />
+          <SwipeToPay onSwipe={sendPayment} label={`Slide to Pay ${getDisplayAmount()}`} />
         </Animated.View>
       )}
+    </Animated.View>
+  );
+
+  /* ── Phase: Signing (waiting for TronLink / MetaMask) ── */
+  const renderSigning = () => (
+    <Animated.View entering={FadeIn.duration(400)} style={styles.centeredFull}>
+      <View style={styles.orbWrap}>
+        <View style={StyleSheet.absoluteFill}>
+          {[0, 1, 2].map((i) => (
+            <View key={i} style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
+              <PulseRing delay={i * 600} color={Accent.purple} duration={1800} />
+            </View>
+          ))}
+        </View>
+        <View style={[styles.signingOrb]}>
+          <Text style={styles.signingIcon}>🔐</Text>
+        </View>
+      </View>
+      <Text style={styles.signingTitle}>
+        {USE_TRON ? 'Waiting for TronLink...' : 'Waiting for Wallet...'}
+      </Text>
+      <Text style={styles.signingSubtext}>Sign the transaction in your wallet app</Text>
     </Animated.View>
   );
 
@@ -414,11 +586,12 @@ export default function NfcReceiver() {
       {phase === 'idle' && renderIdle()}
       {phase === 'scanning' && renderScanning()}
       {(phase === 'received' || phase === 'confirm') && payload && renderReceived()}
+      {phase === 'signing' && renderSigning()}
       {phase === 'success' && renderSuccess()}
 
       {showWipe && (
         <Wipe
-          colors={['#000000', Accent.purple, Accent.green]}
+          colors={USE_TRON ? ['#CC0000', '#FF0013', Accent.green] : ['#000000', Accent.purple, Accent.green]}
           onDone={() => setShowWipe(false)}
         />
       )}
@@ -494,6 +667,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Accent.textSecondary,
   },
+  modeLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: Accent.textTertiary,
+    marginTop: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
   scanningLabel: {
     fontSize: 18,
     color: Accent.textSecondary,
@@ -547,6 +728,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Accent.green,
   },
+  swapBadge: {
+    backgroundColor: 'rgba(255, 0, 19, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  swapBadgeText: {
+    color: '#FF4444',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  vendorAddress: {
+    fontSize: 13,
+    color: Accent.textSecondary,
+    fontFamily: 'monospace',
+    maxWidth: SCREEN_W - 120,
+  },
   confirmBtnContainer: {
     backgroundColor: Accent.blue,
     paddingVertical: 16,
@@ -594,6 +794,34 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: Accent.blue,
+  },
+
+  /* ── Signing ── */
+  signingOrb: {
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: Accent.purple,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: Accent.purple,
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 12,
+  },
+  signingIcon: {
+    fontSize: 56,
+  },
+  signingTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: Accent.textPrimary,
+    marginBottom: 8,
+  },
+  signingSubtext: {
+    fontSize: 14,
+    color: Accent.textSecondary,
   },
 
   /* ── Success ── */
