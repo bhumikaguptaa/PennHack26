@@ -15,24 +15,24 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "Sweet Treats Bakery Shop",
-  description: "A premium bakery marketplace offering fresh artisan breads, cakes, and pastries daily.",
+  title: "Fresh Foods Grocery",
+  description: "A premium grocery marketplace offering fresh produce, meats, and daily essentials.",
 };
 
 function Footer() {
   return (
-    <footer className="bg-[#f4dbd8] border-t border-[#eaccc8] py-12">
+    <footer className="bg-[#d1fae5] border-t border-[#a7f3d0] py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-[#1a1a1a]">
-        <h2 className="font-playfair text-3xl mb-4">Sweet Treats</h2>
-        <p className="mb-6 max-w-md mx-auto text-[#3a3a3a]">
-          BAKERY SHOP
+        <h2 className="font-playfair text-3xl mb-4">Fresh Foods</h2>
+        <p className="mb-6 max-w-md mx-auto text-[#059669]">
+          GROCERY MARKET
         </p>
         <div className="flex justify-center space-x-6 mb-8">
-          <a href="#" className="hover:text-[#8a5a54] transition font-medium">Instagram</a>
-          <a href="#" className="hover:text-[#8a5a54] transition font-medium">Facebook</a>
-          <a href="#" className="hover:text-[#8a5a54] transition font-medium">Twitter</a>
+          <a href="#" className="hover:text-[#059669] transition font-medium">Instagram</a>
+          <a href="#" className="hover:text-[#059669] transition font-medium">Facebook</a>
+          <a href="#" className="hover:text-[#059669] transition font-medium">Twitter</a>
         </div>
-        <p className="text-sm font-light">© 2026 Sweet Treats Bakery Shop. All rights reserved.</p>
+        <p className="text-sm font-light">© 2026 Fresh Foods Grocery. All rights reserved.</p>
       </div>
     </footer>
   );

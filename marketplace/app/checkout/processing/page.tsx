@@ -60,15 +60,15 @@ function ProcessingContent() {
 
     if (status === "completed") {
         return (
-            <div className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-md w-full border border-[#f4dbd8] mx-4 animate-in fade-in zoom-in duration-500">
+            <div className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-md w-full border border-[#d1fae5] mx-4 animate-in fade-in zoom-in duration-500">
                 <div className="flex justify-center mb-6">
                     <div className="relative">
-                        <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-75"></div>
-                        <CheckCircle className="w-24 h-24 text-green-500 relative z-10" />
+                        <div className="absolute inset-0 bg-emerald-100 rounded-full animate-ping opacity-75"></div>
+                        <CheckCircle className="w-24 h-24 text-emerald-500 relative z-10" />
                     </div>
                 </div>
                 <h2 className="font-playfair text-4xl font-bold text-[#1a1a1a] mb-2 tracking-tight">Payment Successful!</h2>
-                <div className="w-16 h-1 bg-green-500 mx-auto rounded-full mt-4 mb-6"></div>
+                <div className="w-16 h-1 bg-emerald-500 mx-auto rounded-full mt-4 mb-6"></div>
 
                 <p className="text-[#3a3a3a] mb-2 text-lg">
                     Thank you {name}, your transaction of <span className="font-bold text-[#1a1a1a]">${amount}</span> is complete.
@@ -81,7 +81,7 @@ function ProcessingContent() {
 
                 <Link
                     href="/"
-                    className="inline-block px-10 py-4 bg-[#8a5a54] text-white font-semibold rounded-xl hover:bg-[#6c4642] transition-colors shadow-lg hover:shadow-xl w-full text-lg"
+                    className="inline-block px-10 py-4 bg-[#059669] text-white font-semibold rounded-xl hover:bg-[#047857] transition-colors shadow-lg hover:shadow-xl w-full text-lg"
                 >
                     Return to Home
                 </Link>
@@ -90,18 +90,18 @@ function ProcessingContent() {
     }
 
     return (
-        <div className="bg-white p-12 rounded-3xl shadow-2xl text-center max-w-lg w-full border border-[#f4dbd8] mx-4 flex flex-col items-center">
+        <div className="bg-white p-12 rounded-3xl shadow-2xl text-center max-w-lg w-full border border-[#d1fae5] mx-4 flex flex-col items-center">
 
             <div className="relative mb-10 mt-4">
-                <div className="absolute inset-0 bg-[#f4dbd8] rounded-full animate-pulse opacity-50 scale-150"></div>
-                <div className="w-32 h-32 bg-[#8a5a54] rounded-full flex items-center justify-center relative z-10 shadow-xl overflow-hidden ring-8 ring-[#fcf3f2]">
+                <div className="absolute inset-0 bg-[#d1fae5] rounded-full animate-pulse opacity-50 scale-150"></div>
+                <div className="w-32 h-32 bg-[#059669] rounded-full flex items-center justify-center relative z-10 shadow-xl overflow-hidden ring-8 ring-[#ecfdf5]">
                     <SmartphoneNfc className="w-16 h-16 text-white animate-bounce" />
                 </div>
             </div>
 
             <h2 className="font-playfair text-3xl font-bold text-[#1a1a1a] mb-4">Processing Payment</h2>
 
-            <div className="flex items-center justify-center gap-3 text-xl text-[#8a5a54] font-medium mb-8 bg-[#fcf3f2] py-3 px-6 rounded-full">
+            <div className="flex items-center justify-center gap-3 text-xl text-[#059669] font-medium mb-8 bg-[#ecfdf5] py-3 px-6 rounded-full">
                 <Loader2 className="w-6 h-6 animate-spin" />
                 <span>Please look at the POS</span>
             </div>
@@ -113,7 +113,7 @@ function ProcessingContent() {
                 </div>
                 <div className="flex justify-between items-center text-sm">
                     <span className="text-gray-500">Status</span>
-                    <span className="text-[#b58c85] font-semibold animate-pulse">Waiting for network...</span>
+                    <span className="text-[#10b981] font-semibold animate-pulse">Waiting for network...</span>
                 </div>
             </div>
 
@@ -125,10 +125,10 @@ export default function ProcessingPage() {
     return (
         <div className="min-h-screen bg-[#fdfbfb] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
             {/* Background decorative blobs */}
-            <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-[#f4dbd8] rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
-            <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-[#eaccc8] rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
+            <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-[#d1fae5] rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-[#a7f3d0] rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
 
-            <Suspense fallback={<div className="text-xl text-[#8a5a54] font-medium animate-pulse">Loading...</div>}>
+            <Suspense fallback={<div className="text-xl text-[#059669] font-medium animate-pulse">Loading...</div>}>
                 <ProcessingContent />
             </Suspense>
         </div>
