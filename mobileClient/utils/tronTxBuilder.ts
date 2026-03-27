@@ -13,9 +13,9 @@
 import TronWeb from 'tronweb';
 
 // ── TRON Nile Testnet constants ────────────────────────
-const NILE_FULL_NODE   = 'https://nile.trongrid.io';
-const NILE_SOLIDITY    = 'https://nile.trongrid.io';
-const NILE_EVENT       = 'https://event.nileex.io';
+const NILE_FULL_NODE = 'https://nile.trongrid.io';
+const NILE_SOLIDITY = 'https://nile.trongrid.io';
+const NILE_EVENT = 'https://event.nileex.io';
 
 // SunSwap V2 Router on Nile
 const SUNSWAP_ROUTER_ADDRESS = 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax';
@@ -28,9 +28,9 @@ const SWAP_ABI = [
   {
     inputs: [
       { name: 'amountOutMin', type: 'uint256' },
-      { name: 'path',         type: 'address[]' },
-      { name: 'to',           type: 'address' },
-      { name: 'deadline',     type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
     ],
     name: 'swapExactTRXForTokens',
     outputs: [{ name: 'amounts', type: 'uint256[]' }],
@@ -41,9 +41,10 @@ const SWAP_ABI = [
 
 // Typed payload that arrives from the NFC tag
 export interface TronSwapPayload {
-  payment_amt: number;           // amount in TRX (human-readable)
+  payment_amt: number;           // amount in USD (display value)
+  payment_amt_trx: number;      // amount in TRX
   source_currency: string;       // "TRX"
-  destination_currency: string;  // TRC-20 token contract address (e.g. USDT)
+  destination_currency: string;  // "USDT"
   destination_wallet: string;    // vendor's TRON address
 }
 
@@ -98,10 +99,10 @@ export async function buildSwapTransaction(
       callValue: callValueSun,                 // TRX sent with the call
     },
     [
-      { type: 'uint256',   value: amountOutMin },
+      { type: 'uint256', value: amountOutMin },
       { type: 'address[]', value: path },
-      { type: 'address',   value: destinationWalletHex },
-      { type: 'uint256',   value: deadline },
+      { type: 'address', value: destinationWalletHex },
+      { type: 'uint256', value: deadline },
     ],
     callerAddress,                              // issuer address
   );

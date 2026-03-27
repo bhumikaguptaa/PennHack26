@@ -15,8 +15,7 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
 // ─────────────────────────────────────────────
-// FEATURE FLAG — set USE_TRON=true in .env to
-// switch from Base Sepolia ERC-20 → TRON DEX swap
+// FEATURE FLAG
 // ─────────────────────────────────────────────
 const USE_TRON = process.env.USE_TRON === 'true';
 
@@ -25,11 +24,10 @@ const USE_TRON = process.env.USE_TRON === 'true';
 // ═══════════════════════════════════════════════
 const RLUSD_TOKEN_ADDRESS = "0xbD84621010fF42EB5bF72872BE6ec6FE67Db546f";
 const RLUSD_DECIMALS = 18;
-const BASE_CHAIN_ID = 84532; // Base Sepolia
+const BASE_CHAIN_ID = 84532;
 
 let ethClient = null;
 if (!USE_TRON) {
-  // Only import viem when needed
   const { createPublicClient, http } = await import('viem');
   const { baseSepolia } = await import('viem/chains');
   ethClient = createPublicClient({
@@ -43,18 +41,42 @@ if (!USE_TRON) {
 // TRON NILE TESTNET CONFIG
 // ═══════════════════════════════════════════════
 const TRON_NILE_API = process.env.TRON_NILE_API || 'https://nile.trongrid.io';
-// SunSwap V2 router on Nile testnet
 const SUNSWAP_ROUTER = process.env.SUNSWAP_ROUTER || 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax';
-// USDT TRC-20 on Nile testnet
 const USDT_TRC20_ADDRESS = process.env.USDT_TRC20_ADDRESS || 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj';
-// Wrapped TRX on Nile
 const WTRX_ADDRESS = process.env.WTRX_ADDRESS || 'TYsbWxNnyTgsZaTFaue9hby3KnDuwFBhwS';
+
+// TRX → USD exchange rate (1 TRX = $X)
+const TRX_USD_RATE = parseFloat(process.env.TRX_USD_RATE || '0.25');
+
+// Backend wallet private key — this wallet holds TRX and executes swaps
+const SWAP_WALLET_KEY = process.env.SWAP_WALLET_KEY || '';
+
+// ── TronWeb setup ──
+let tronWeb = null;
+let SWAP_WALLET_ADDRESS = '';
+
+if (USE_TRON) {
+  if (!SWAP_WALLET_KEY) {
+    console.error("❌ SWAP_WALLET_KEY not set in .env — exiting.");
+    process.exit(1);
+  }
+
+  const { TronWeb } = await import('tronweb');
+
+  tronWeb = new TronWeb({
+    fullHost: TRON_NILE_API,
+    privateKey: SWAP_WALLET_KEY,
+  });
+
+  SWAP_WALLET_ADDRESS = tronWeb.defaultAddress.base58;
+  console.log(`[TRON] Swap wallet: ${SWAP_WALLET_ADDRESS}`);
+}
 
 // ═══════════════════════════════════════════════
 // SHARED CONFIG
 // ═══════════════════════════════════════════════
-const MERCHANT_WALLET = process.env.MERCHANT_WALLET_ADDRESS;   // EVM (Base Sepolia)
-const MERCHANT_TRON = process.env.MERCHANT_TRON_ADDRESS;      // TRON base58
+const MERCHANT_WALLET = process.env.MERCHANT_WALLET_ADDRESS;
+const MERCHANT_TRON = process.env.MERCHANT_TRON_ADDRESS;
 
 if (USE_TRON && !MERCHANT_TRON) {
   console.error("❌ MERCHANT_TRON_ADDRESS not set in .env — exiting.");
@@ -68,20 +90,9 @@ if (!USE_TRON && !MERCHANT_WALLET) {
 // --- SESSION STORE ---
 const activeSessions = new Map();
 
-function pendingTerminalsForMerchant(merchantAddr) {
-  const addr = merchantAddr.toLowerCase();
-  const matches = [];
-  for (const [terminalId, session] of activeSessions) {
-    if (session.status === 'PENDING' && session.merchantAddress.toLowerCase() === addr) {
-      matches.push(terminalId);
-    }
-  }
-  return matches;
-}
-
 // ─────────────────────────────────────────────
 // 1. CHECKOUT ENDPOINT
-//    Laptop Kiosk → Backend
+//    Laptop Kiosk → Backend → POS (via socket)
 // ─────────────────────────────────────────────
 app.post('/api/checkout', (req, res) => {
   const { amount_usd, terminal_id } = req.body;
@@ -94,25 +105,29 @@ app.post('/api/checkout', (req, res) => {
   }
 
   if (USE_TRON) {
-    // ── TRON DEX SWAP PAYLOAD ──
-    console.log(`[Checkout·TRON] terminal=${terminal_id} | ${amount_usd} TRX → ${MERCHANT_TRON}`);
+    const payment_amt_trx = parseFloat((amount_usd / TRX_USD_RATE).toFixed(6));
+
+    console.log(`[Checkout·TRON] terminal=${terminal_id} | $${amount_usd} = ${payment_amt_trx} TRX → vendor ${MERCHANT_TRON} gets USDT`);
 
     activeSessions.set(terminal_id, {
       status: 'PENDING',
       amount_usd,
+      payment_amt_trx,
       network: 'TRON',
       merchantAddress: MERCHANT_TRON,
       createdAt: Date.now(),
     });
 
+    // NFC payload sent to POS → broadcast via NFC → read by customer's phone
     io.to(terminal_id).emit('payment_intent', {
       payment_amt: amount_usd,
+      payment_amt_trx,
       source_currency: 'TRX',
-      destination_currency: USDT_TRC20_ADDRESS,
+      destination_currency: 'USDT',
       destination_wallet: MERCHANT_TRON,
     });
 
-    return res.json({ success: true, network: 'TRON', terminal_id, amount_usd });
+    return res.json({ success: true, network: 'TRON', terminal_id, amount_usd, payment_amt_trx });
   }
 
   // ── BASE SEPOLIA ERC-20 PAYLOAD (fallback) ──
@@ -141,7 +156,135 @@ app.post('/api/checkout', (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// 2. SESSION STATUS ENDPOINT
+// 2. EXECUTE SWAP — SunSwap V2 (TRX → USDT)
+//    Called by mobile client after customer swipes to pay.
+//    Backend wallet calls swapExactTRXForTokens on SunSwap V2.
+//    USDT output goes DIRECTLY to the vendor's address.
+// ─────────────────────────────────────────────
+app.post('/api/execute-swap', async (req, res) => {
+  if (!USE_TRON || !tronWeb) {
+    return res.status(400).json({ error: "TRON mode not active" });
+  }
+
+  const { terminal_id } = req.body;
+
+  if (!terminal_id) {
+    return res.status(400).json({ error: "Missing terminal_id" });
+  }
+
+  const session = activeSessions.get(terminal_id);
+  if (!session || session.network !== 'TRON') {
+    return res.status(404).json({ error: "No TRON session for this terminal" });
+  }
+
+  if (session.status !== 'PENDING') {
+    return res.status(400).json({ error: `Session already ${session.status}` });
+  }
+
+  session.status = 'SWAPPING';
+
+  try {
+    const trxAmountSun = Math.round(session.payment_amt_trx * 1_000_000);
+
+    // Convert addresses to hex for the swap path
+    const wtrxHex = tronWeb.address.toHex(WTRX_ADDRESS);
+    const usdtHex = tronWeb.address.toHex(USDT_TRC20_ADDRESS);
+    const vendorHex = tronWeb.address.toHex(session.merchantAddress);
+
+    // Swap path: WTRX → USDT
+    const path = [wtrxHex, usdtHex];
+
+    // Deadline: 5 minutes from now
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
+    console.log(`[Swap] Executing: ${session.payment_amt_trx} TRX → USDT → ${session.merchantAddress}`);
+    console.log(`[Swap]   SUN value: ${trxAmountSun}`);
+    console.log(`[Swap]   Router: ${SUNSWAP_ROUTER}`);
+    console.log(`[Swap]   Path: WTRX(${WTRX_ADDRESS}) → USDT(${USDT_TRC20_ADDRESS})`);
+
+    // Call swapExactTRXForTokens on SunSwap V2 Router
+    const { transaction } = await tronWeb.transactionBuilder.triggerSmartContract(
+      SUNSWAP_ROUTER,
+      'swapExactTRXForTokens(uint256,address[],address,uint256)',
+      {
+        feeLimit: 100_000_000,     // 100 TRX max fee
+        callValue: trxAmountSun,   // TRX sent with the swap
+      },
+      [
+        { type: 'uint256',   value: 0 },            // amountOutMin = 0 (accept any slippage for demo)
+        { type: 'address[]', value: path },          // swap path
+        { type: 'address',   value: vendorHex },     // USDT goes DIRECTLY to vendor
+        { type: 'uint256',   value: deadline },      // deadline
+      ],
+      SWAP_WALLET_ADDRESS,
+    );
+
+    // Sign the transaction with the backend wallet
+    const signedTx = await tronWeb.trx.sign(transaction);
+
+    // Broadcast to the TRON network
+    const broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
+
+    if (!broadcast.result) {
+      throw new Error(`Broadcast failed: ${JSON.stringify(broadcast)}`);
+    }
+
+    const txHash = broadcast.txid || transaction.txID;
+
+    console.log(`[Swap] ✅ Broadcast success: ${txHash}`);
+
+    // Wait a moment and check if the transaction was confirmed
+    let confirmed = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const infoResp = await fetch(`${TRON_NILE_API}/wallet/gettransactioninfobyid`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: txHash }),
+        });
+        const info = await infoResp.json();
+        if (info && info.id) {
+          confirmed = true;
+          if (info.receipt?.result && info.receipt.result !== 'SUCCESS') {
+            console.warn(`[Swap] ⚠️ Tx confirmed but result: ${info.receipt.result}`);
+          } else {
+            console.log(`[Swap] ✅ Confirmed on-chain`);
+          }
+          break;
+        }
+      } catch (e) {
+        // keep polling
+      }
+    }
+
+    session.status = 'COMPLETED';
+    session.txHash = txHash;
+
+    // Notify POS terminal
+    io.to(terminal_id).emit('payment_success', {
+      amount: session.amount_usd,
+      txHash,
+      explorerUrl: `https://nile.tronscan.org/#/transaction/${txHash}`,
+    });
+
+    setTimeout(() => activeSessions.delete(terminal_id), 300_000);
+
+    res.json({
+      success: true,
+      txHash,
+      confirmed,
+      explorerUrl: `https://nile.tronscan.org/#/transaction/${txHash}`,
+    });
+  } catch (error) {
+    console.error('[Swap] ❌ Error:', error.message || error);
+    session.status = 'PENDING'; // Reset so client can retry
+    res.status(500).json({ error: "Swap failed", details: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 3. SESSION STATUS
 // ─────────────────────────────────────────────
 app.get('/api/session/:terminal_id', (req, res) => {
   const session = activeSessions.get(req.params.terminal_id);
@@ -156,80 +299,23 @@ app.get('/api/session/:terminal_id', (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// 3. HEALTH CHECK
+// 4. HEALTH CHECK
 // ─────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mode: USE_TRON ? 'TRON' : 'BASE_SEPOLIA', activeSessions: activeSessions.size });
-});
-
-// ─────────────────────────────────────────────
-// 4. VERIFY PAYMENT — TRON (Nile testnet)
-//    Polls TronGrid API for transaction receipt
-// ─────────────────────────────────────────────
-app.post('/api/verify-tron-payment', async (req, res) => {
-  const { txHash, terminal_id } = req.body;
-
-  if (!txHash || !terminal_id) {
-    return res.status(400).json({ error: "Missing txHash or terminal_id" });
-  }
-
-  const session = activeSessions.get(terminal_id);
-  if (!session || session.status !== 'PENDING') {
-    return res.status(404).json({ error: "No pending session for this terminal" });
-  }
-
-  try {
-    // Poll TronGrid for the transaction info (with retries)
-    let txInfo = null;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const resp = await fetch(`${TRON_NILE_API}/wallet/gettransactioninfobyid`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: txHash }),
-      });
-      const data = await resp.json();
-      if (data && data.id) {
-        txInfo = data;
-        break;
-      }
-      // Wait 3 seconds between retries
-      await new Promise(r => setTimeout(r, 3000));
-    }
-
-    if (!txInfo) {
-      return res.status(408).json({ error: "Transaction not found after polling" });
-    }
-
-    if (txInfo.receipt?.result !== 'SUCCESS') {
-      return res.status(400).json({ error: "Transaction failed on-chain", result: txInfo.receipt?.result });
-    }
-
-    session.status = 'COMPLETED';
-    session.txHash = txHash;
-
-    console.log(`[Verified·TRON] terminal=${terminal_id} | tx=${txHash}`);
-
-    io.to(terminal_id).emit('payment_success', {
-      amount: session.amount_usd,
-      txHash,
-      explorerUrl: `https://nile.tronscan.org/#/transaction/${txHash}`,
-    });
-
-    setTimeout(() => activeSessions.delete(terminal_id), 300_000);
-    res.json({ success: true, txHash });
-  } catch (error) {
-    console.error('[Verify·TRON] Error:', error.message);
-    res.status(500).json({ error: "Failed to verify TRON transaction" });
-  }
+  res.json({
+    ok: true,
+    mode: USE_TRON ? 'TRON' : 'BASE_SEPOLIA',
+    activeSessions: activeSessions.size,
+    swapWallet: USE_TRON ? SWAP_WALLET_ADDRESS : undefined,
+  });
 });
 
 // ─────────────────────────────────────────────
 // 5. VERIFY PAYMENT — Base Sepolia (old flow)
-//    Gated behind feature flag
 // ─────────────────────────────────────────────
 app.post('/api/verify-payment', async (req, res) => {
   if (USE_TRON) {
-    return res.status(400).json({ error: "Base Sepolia verification disabled — USE_TRON is active. Use /api/verify-tron-payment instead." });
+    return res.status(400).json({ error: "Base Sepolia verification disabled — USE_TRON is active." });
   }
 
   const { txHash, terminal_id } = req.body;
@@ -263,8 +349,6 @@ app.post('/api/verify-payment', async (req, res) => {
 
     session.status = 'COMPLETED';
     session.txHash = txHash;
-
-    console.log(`[Verified·ETH] terminal=${terminal_id} | tx=${txHash}`);
 
     io.to(terminal_id).emit('payment_success', {
       amount: session.amount_usd,
@@ -304,9 +388,11 @@ httpServer.listen(PORT, () => {
   console.log(`✅ CryptoPay backend running on port ${PORT}`);
   console.log(`   Mode:            ${USE_TRON ? 'TRON (Nile Testnet)' : 'Base Sepolia (ERC-20)'}`);
   if (USE_TRON) {
+    console.log(`   Swap wallet:     ${SWAP_WALLET_ADDRESS}`);
     console.log(`   Merchant TRON:   ${MERCHANT_TRON}`);
-    console.log(`   USDT TRC-20:     ${USDT_TRC20_ADDRESS}`);
     console.log(`   SunSwap Router:  ${SUNSWAP_ROUTER}`);
+    console.log(`   USDT TRC-20:     ${USDT_TRC20_ADDRESS}`);
+    console.log(`   TRX/USD rate:    $${TRX_USD_RATE}`);
   } else {
     console.log(`   Merchant wallet: ${MERCHANT_WALLET}`);
     console.log(`   Token (RLUSD):   ${RLUSD_TOKEN_ADDRESS}`);

@@ -24,17 +24,10 @@ import Animated, {
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import NfcManager, { Ndef, NfcEvents, TagEvent } from 'react-native-nfc-manager';
-import { useProvider, useAccount } from '@reown/appkit-react-native';
 import { Accent } from '@/constants/theme';
 
-// ── TRON imports ──
-import { buildSwapTransaction, TronSwapPayload } from '@/utils/tronTxBuilder';
-import { launchTronLink, pollForTransaction } from '@/utils/tronlink';
-
-const txTimeoutPromise = (ms: number) =>
-  new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Transaction timed out. Please try again or check your wallet app.')), ms)
-  );
+// ── TRON types ──
+import { TronSwapPayload } from '@/utils/tronTxBuilder';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -204,11 +197,6 @@ export default function NfcReceiver() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [showWipe, setShowWipe] = useState(false);
-  const pollStartTime = useRef<number>(0);
-
-  // EVM wallet (used for old Base Sepolia path)
-  const { provider } = useProvider();
-  const { address, isConnected } = useAccount();
 
   // Scanning rotation for center orb
   const scanRotation = useSharedValue(0);
@@ -239,6 +227,7 @@ export default function NfcReceiver() {
             // TRON DEX swap payload
             const tronPayload: TronSwapPayload = {
               payment_amt: data.payment_amt,
+              payment_amt_trx: data.payment_amt_trx,
               source_currency: data.source_currency,
               destination_currency: data.destination_currency,
               destination_wallet: data.destination_wallet,
@@ -295,84 +284,55 @@ export default function NfcReceiver() {
   };
 
   // ── TRON payment flow ──
+  // Customer swipes → client calls backend → backend executes SunSwap V2 swap
+  // USDT goes directly to vendor via the DEX router's `to` parameter
   const sendTronPayment = async () => {
     if (!payload || !isTronPayload(payload)) return;
 
-    // For TRON, we don't need the EVM wallet — TronLink manages the address
-    // We use a placeholder caller address; TronLink will override with the real one
     try {
       setPhase('signing');
 
-      // Build the unsigned swap transaction
-      // Use a dummy caller address — TronLink will replace the owner_address
-      const dummyCaller = payload.destination_wallet; // use vendor as placeholder
-      const { transaction } = await buildSwapTransaction(payload, dummyCaller);
+      // Call backend to execute the swap
+      const resp = await fetch(`${SERVER_URL}/api/execute-swap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ terminal_id: 'term_01' }),
+      });
 
-      // Record the timestamp before launching TronLink
-      pollStartTime.current = Date.now();
+      const data = await resp.json();
 
-      // Launch TronLink for signing
-      const launched = await launchTronLink(transaction, 'CryptoPay');
-
-      if (!launched) {
-        Alert.alert(
-          'TronLink Not Found',
-          'Please install TronLink from Google Play Store and set up your wallet.',
-        );
-        setPhase('confirm');
-        return;
+      if (!resp.ok) {
+        throw new Error(data.error || data.details || 'Swap failed');
       }
 
-      // Start polling for the broadcast transaction
-      // TronLink will sign and broadcast — we listen for it
-      const result = await pollForTransaction(
-        dummyCaller,
-        pollStartTime.current,
-        3000,
-        40, // 2 minutes max
-      );
-
-      if (result.found && result.txHash) {
-        setTxHash(result.txHash);
-        setPhase('success');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        // Notify backend
-        fetch(`${SERVER_URL}/api/verify-tron-payment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ txHash: result.txHash, terminal_id: 'term_01' }),
-        }).catch((err) => console.warn('TRON verify call failed:', err));
-      } else {
-        Alert.alert('Transaction Not Found', 'Could not detect a broadcast transaction. Please try again.');
-        setPhase('confirm');
-      }
+      setTxHash(data.txHash);
+      setPhase('success');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: any) {
-      console.error('TRON transaction error:', error);
-      Alert.alert('Transaction Failed', error?.message || 'Failed to process TRON transaction');
+      console.error('TRON swap error:', error);
+      Alert.alert('Swap Failed', error?.message || 'Failed to execute TRX → USDT swap');
       setPhase('confirm');
     }
   };
 
-  // ── Base Sepolia payment flow (old) ──
+  // ── Base Sepolia payment flow (old — requires AppKit to be loaded) ──
   const sendEvmPayment = async () => {
     if (!payload || isTronPayload(payload)) return;
 
-    if (!isConnected || !provider || !address) {
-      Alert.alert('Wallet Not Connected', 'Please connect your wallet on the Home tab first.');
-      return;
-    }
+    // NOTE: This path is only reachable when USE_TRON = false
+    // In that case, AppKit must be loaded and provide EVM wallet
+    Alert.alert('EVM Flow Disabled', 'Switch USE_TRON to false and restart to use the Base Sepolia flow.');
+    setPhase('confirm');
+    return;
 
+    /* --- PRESERVED EVM CODE (activate by removing early return above) ---
     try {
       setPhase('signing');
-      const fromAddress = address.includes(':') ? address.split(':').pop()! : address;
+      const fromAddress = '';
       const data = encodeErc20Transfer(payload.to, payload.amountRaw);
 
       const hash = await Promise.race([
-        provider.request<string>({
-          method: 'eth_sendTransaction',
-          params: [{ from: fromAddress, to: payload.tokenAddress, data, value: '0x0', gas: '0x1D4C0' }],
-        }),
+        Promise.reject(new Error('EVM provider not available in TRON mode')),
         txTimeoutPromise(60000),
       ]);
 
@@ -390,6 +350,7 @@ export default function NfcReceiver() {
       Alert.alert('Transaction Failed', error?.message || 'Failed to send transaction');
       setPhase('confirm');
     }
+    --- END PRESERVED EVM CODE */
   };
 
   // ── Unified send handler ──
@@ -404,13 +365,13 @@ export default function NfcReceiver() {
   // ── Display helpers ──
   const getDisplayAmount = (): string => {
     if (!payload) return '0.00';
-    if (isTronPayload(payload)) return `${payload.payment_amt} TRX`;
+    if (isTronPayload(payload)) return `${payload.payment_amt_trx} TRX`;
     return `$${payload.amountUsd.toFixed(2)}`;
   };
 
   const getSwapInfo = (): string | null => {
     if (!payload || !isTronPayload(payload)) return null;
-    return `${payload.source_currency} → USDT`;
+    return `${payload.payment_amt_trx} TRX → $${payload.payment_amt} USDT`;
   };
 
   const getExplorerUrl = (): string | null => {
@@ -449,10 +410,11 @@ export default function NfcReceiver() {
             if (USE_TRON) {
               setPayload({
                 payment_amt: 50,
+                payment_amt_trx: 200,
                 source_currency: 'TRX',
-                destination_currency: 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj',
+                destination_currency: 'USDT',
                 destination_wallet: 'TYourVendorAddress',
-              });
+              } as TronSwapPayload);
             } else {
               setPayload({
                 type: 'RLUSD_PAY',
@@ -555,10 +517,8 @@ export default function NfcReceiver() {
           <Text style={styles.signingIcon}>🔐</Text>
         </View>
       </View>
-      <Text style={styles.signingTitle}>
-        {USE_TRON ? 'Waiting for TronLink...' : 'Waiting for Wallet...'}
-      </Text>
-      <Text style={styles.signingSubtext}>Sign the transaction in your wallet app</Text>
+      <Text style={styles.signingTitle}>Processing Swap...</Text>
+      <Text style={styles.signingSubtext}>Swapping TRX → USDT via SunSwap V2</Text>
     </Animated.View>
   );
 

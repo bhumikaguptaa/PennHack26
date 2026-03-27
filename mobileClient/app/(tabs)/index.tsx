@@ -15,32 +15,11 @@ import Animated, {
 } from 'react-native-reanimated'
 import * as Haptics from 'expo-haptics'
 import ConnectButton from '@/components/connectbutton'
-import { useAccount } from '@reown/appkit-react-native'
+import { useTronWallet } from '@/contexts/TronWalletContext'
 import { Accent } from '@/constants/theme'
 
-const BASE_SEPOLIA_RPC = 'https://sepolia.base.org'
-const TOKEN_ADDRESS = '0xbD84621010fF42EB5bF72872BE6ec6FE67Db546f'
-const TOKEN_DECIMALS = 18
-async function fetchTokenBalance(address: string): Promise<string> {
-  const data = '0x70a08231' + address.slice(2).toLowerCase().padStart(64, '0')
-  const res = await fetch(BASE_SEPOLIA_RPC, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: 1,
-      method: 'eth_call',
-      params: [{ to: TOKEN_ADDRESS, data }, 'latest'],
-    }),
-  })
-  const json = await res.json()
-  if (!json?.result || json.result === '0x') return '0'
-  const raw = BigInt(json.result)
-  return (Number(raw) / 10 ** TOKEN_DECIMALS).toFixed(2)
-}
-
 function shortenAddress(addr: string) {
-  const raw = addr.includes(':') ? addr.split(':').pop()! : addr
-  return `${raw.slice(0, 6)}...${raw.slice(-4)}`
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`
 }
 
 /* ── Pulsing Ring (reanimated) ────────────────────────────── */
@@ -121,9 +100,9 @@ const TransitionWipe = ({ onDone }: { onDone: () => void }) => {
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Animated.View style={[circle, { backgroundColor: Accent.darkSlate }, c1]} />
-        <Animated.View style={[circle, { backgroundColor: Accent.purple }, c2]} />
-        <Animated.View style={[circle, { backgroundColor: Accent.blue }, c3]} />
+        <Animated.View style={[circle, { backgroundColor: '#CC0000' }, c1]} />
+        <Animated.View style={[circle, { backgroundColor: '#FF0013' }, c2]} />
+        <Animated.View style={[circle, { backgroundColor: Accent.green }, c3]} />
       </View>
     </View>
   )
@@ -158,7 +137,7 @@ const BalanceOrb = ({ balance, loading }: { balance: string | null; loading: boo
         <View style={StyleSheet.absoluteFill}>
           {[0, 1, 2].map((i) => (
             <View key={i} style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
-              <PulseRing delay={i * 600} color={Accent.blue} />
+              <PulseRing delay={i * 600} color={'#FF0013'} />
             </View>
           ))}
         </View>
@@ -170,7 +149,7 @@ const BalanceOrb = ({ balance, loading }: { balance: string | null; loading: boo
         ) : (
           <Animated.View style={[{ alignItems: 'center' }, textStyle]}>
             <Text style={styles.orbBalance}>{balance ?? '0'}</Text>
-            <Text style={styles.orbCurrency}>RLUSD</Text>
+            <Text style={styles.orbCurrency}>TRX</Text>
           </Animated.View>
         )}
       </Animated.View>
@@ -193,9 +172,9 @@ const DisconnectedHero = () => (
         <Text style={styles.iconEmoji}>💳</Text>
       </View>
     </View>
-    <Text style={styles.heroTitle}>Connect Your Wallet</Text>
+    <Text style={styles.heroTitle}>Connect TronLink Pro</Text>
     <Text style={styles.heroDescription}>
-      Link your wallet to view your Base Sepolia RLUSD balance and start transacting.
+      Link your TronLink Pro wallet to view your TRX balance and pay at terminals on the TRON Nile Testnet.
     </Text>
     <View style={styles.connectWrapper}>
       <ConnectButton />
@@ -205,9 +184,7 @@ const DisconnectedHero = () => (
 
 /* ── Main Screen ──────────────────────────────────────────── */
 export default function HomeScreen() {
-  const { address, isConnected } = useAccount()
-  const [balance, setBalance] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const { address, isConnected, balance, balanceLoading, refreshBalance } = useTronWallet()
   const [refreshing, setRefreshing] = useState(false)
   const [showWipe, setShowWipe] = useState(false)
   const [wipeComplete, setWipeComplete] = useState(false)
@@ -218,27 +195,15 @@ export default function HomeScreen() {
     transform: [{ scale: balanceBounce.value }],
   }))
 
-  const doFetch = useCallback((isRefresh = false) => {
-    if (!isConnected || !address) { setBalance(null); return }
-    if (isRefresh) setRefreshing(true)
-    else setLoading(true)
-    const raw = address.includes(':') ? address.split(':').pop()! : address
-    fetchTokenBalance(raw)
-      .then((b) => { setBalance(b) })
-      .catch(() => { setBalance(null) })
-      .finally(() => {
-        setLoading(false)
-        setRefreshing(false)
-        if (isRefresh) {
-          balanceBounce.value = withSequence(
-            withTiming(1.06, { duration: 150 }),
-            withSpring(1, { damping: 10 }),
-          )
-        }
-      })
-  }, [isConnected, address])
-
-  useEffect(() => { doFetch() }, [isConnected, address])
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await refreshBalance()
+    setRefreshing(false)
+    balanceBounce.value = withSequence(
+      withTiming(1.06, { duration: 150 }),
+      withSpring(1, { damping: 10 }),
+    )
+  }, [refreshBalance])
 
   useEffect(() => {
     if (isConnected && !prevConnected.current) {
@@ -252,7 +217,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.logo}>CryptoPay</Text>
-        <Text style={styles.subtitle}>Base Sepolia</Text>
+        <Text style={styles.subtitle}>TRON · Nile Testnet</Text>
       </View>
 
       {!isConnected ? (
@@ -264,18 +229,18 @@ export default function HomeScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => doFetch(true)}
-              tintColor={Accent.blue}
+              onRefresh={doRefresh}
+              tintColor={'#FF0013'}
             />
           }
         >
           <Animated.View entering={FadeIn.duration(500)} style={balanceBounceStyle}>
-            <BalanceOrb balance={balance} loading={loading} />
+            <BalanceOrb balance={balance} loading={balanceLoading} />
           </Animated.View>
 
           <Animated.View entering={FadeIn.delay(200).duration(400)} style={styles.networkBadge}>
-            <BreathingDot color={Accent.purple} />
-            <Text style={styles.networkText}>Base Sepolia</Text>
+            <BreathingDot color={'#FF0013'} />
+            <Text style={styles.networkText}>TRON Nile Testnet</Text>
           </Animated.View>
 
           <Animated.View entering={FadeIn.delay(350).duration(400)} style={styles.infoCard}>
@@ -290,6 +255,11 @@ export default function HomeScreen() {
                 <BreathingDot color={Accent.green} />
                 <Text style={styles.statusText}>Connected</Text>
               </View>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Network</Text>
+              <Text style={styles.infoValue}>Nile Testnet</Text>
             </View>
           </Animated.View>
 
@@ -395,7 +365,7 @@ const styles = StyleSheet.create({
     backgroundColor: Accent.card,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: Accent.blue,
+    shadowColor: '#FF0013',
     shadowOpacity: 0.4,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 0 },
