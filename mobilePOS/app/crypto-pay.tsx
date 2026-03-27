@@ -20,7 +20,7 @@ import { Image } from 'expo-image';
 
 type PaymentStep = 'idle' | 'summary' | 'processing' | 'transition_ready' | 'ready' | 'completed';
 
-const SOCKET_URL = 'http://10.104.84.121:3001';
+const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.104.84.121:3001';
 
 // 1. Pulser for Idle
 const IdlePulser = () => {

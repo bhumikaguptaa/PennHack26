@@ -17,7 +17,8 @@ function ProcessingContent() {
     const amount = searchParams.get("amount") || "0.00";
     const name = searchParams.get("name") || "Customer";
     const contact = searchParams.get("contact") || "";
-    const SOCKET_URL = 'http://10.104.84.121:3001';
+    // Dynamically grab the hostname from the browser so it works on localhost as well as network IP tests
+    const SOCKET_URL = typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:3001` : "http://localhost:3001";
     const terminal_id = "term_01"; // Default terminal ID for demonstration
     useEffect(() => {
         // Initialize socket connection
