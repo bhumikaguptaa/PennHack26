@@ -6,7 +6,7 @@ import { useCart } from "../../context/CartContext";
 import { CheckCircle, Loader2, SmartphoneNfc } from "lucide-react";
 import Link from "next/link";
 import { io } from "socket.io-client";
-import { pinata } from "@/pinataProvider";
+
 function ProcessingContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -38,25 +38,25 @@ function ProcessingContent() {
         };
     }, [terminal_id]);
 
-    async function completeTransaction(){
+    async function completeTransaction() {
         setStatus("completed");
-        const response = await fetch("/api/upload",{
-            method: 'POST',
-            body: JSON.stringify({
-                name:name,
-                contact:contact,
-                items:cart,
-                amount: amount
-            })
-        })
+        // const response = await fetch("/api/upload", {
+        //     method: 'POST',
+        //     body: JSON.stringify({
+        //         name: name,
+        //         contact: contact,
+        //         items: cart,
+        //         amount: amount
+        //     })
+        // })
 
-        if (!response.ok){
-            alert("ERROR WITH PINATA")
-            const data = await response.json()
+        // if (!response.ok) {
+        //     alert("ERROR WITH PINATA")
+        //     const data = await response.json()
 
-            console.log(data)
-        }
-        
+        //     console.log(data)
+        // }
+
     }
 
     if (status === "completed") {
