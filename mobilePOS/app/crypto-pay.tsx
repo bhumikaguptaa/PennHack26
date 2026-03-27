@@ -20,7 +20,7 @@ import { Image } from 'expo-image';
 
 type PaymentStep = 'idle' | 'summary' | 'processing' | 'transition_ready' | 'ready' | 'completed';
 
-const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.104.84.121:3001';
+const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.0.129:3001';
 
 // 1. Pulser for Idle
 const IdlePulser = () => {
@@ -296,12 +296,28 @@ export default function CryptoPayScreen() {
             <View style={styles.summaryContainer}>
                 <Text style={styles.title}>Order Summary</Text>
                 <View style={styles.card}>
-                    <Text style={styles.itemName}>Sweet Treats Order</Text>
-                    <Text style={styles.price}>${paymentData?.amountUsd?.toFixed(2) || '0.00'}</Text>
+                    <Text style={styles.itemName}>Groceries</Text>
+                    <Text style={styles.price}>${paymentData?.payment_amt?.toFixed(2) || paymentData?.amountUsd?.toFixed(2) || '0.00'}</Text>
                 </View>
+
+                {paymentData?.payment_amt_trx && (
+                    <View style={styles.cryptoDetails}>
+                        <View style={styles.cryptoRow}>
+                            <Text style={styles.cryptoLabel}>Pay With ({paymentData?.source_currency || 'TRX'}):</Text>
+                            <Text style={styles.cryptoValue}>{paymentData?.payment_amt_trx}</Text>
+                        </View>
+                        {paymentData?.destination_currency && (
+                            <View style={styles.cryptoRow}>
+                                <Text style={styles.cryptoLabel}>Merchant Receives:</Text>
+                                <Text style={styles.cryptoValue}>{paymentData?.destination_currency}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+
                 <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>Total</Text>
-                    <Text style={styles.totalAmount}>${paymentData?.amountUsd?.toFixed(2) || '0.00'}</Text>
+                    <Text style={styles.totalAmount}>${paymentData?.payment_amt?.toFixed(2) || paymentData?.amountUsd?.toFixed(2) || '0.00'}</Text>
                 </View>
 
                 <View style={{ width: '100%', alignItems: 'center', marginTop: 10 }}>
@@ -505,6 +521,27 @@ const styles = StyleSheet.create({
         fontSize: 28,
         fontWeight: 'bold',
         color: '#1a1a1a',
+    },
+    cryptoDetails: {
+        paddingHorizontal: 8,
+        marginBottom: 16,
+    },
+    cryptoRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 6,
+    },
+    cryptoLabel: {
+        fontSize: 16,
+        color: '#666',
+        fontWeight: '500',
+    },
+    cryptoValue: {
+        fontSize: 16,
+        color: '#1a1a1a',
+        fontWeight: '700',
+        maxWidth: 150,
     },
     swipeContainer: {
         height: KNOB_SIZE + 8,
