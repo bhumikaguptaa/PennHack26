@@ -58,7 +58,7 @@ function encodeErc20Transfer(to: string, amountRaw: string): string {
   return `${ERC20_TRANSFER_SELECTOR}${paddedAddress}${amountHex}`;
 }
 
-const SERVER_URL = "http://10.0.0.129:3001";
+const SERVER_URL = process.env.EXPO_PUBLIC_API_URL || "http://10.251.3.118:3001";
 const ENABLE_DEBUG_FLOW = false;
 
 type Phase = 'idle' | 'scanning' | 'received' | 'confirm' | 'signing' | 'success';
