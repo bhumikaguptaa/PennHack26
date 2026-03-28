@@ -241,8 +241,9 @@ app.post('/api/execute-swap', async (req, res) => {
     }
 
     const txHash = broadcast.txid || signedTx.txID;
-
+    console.log("=============================================")
     console.log(`[Swap] ✅ Broadcast success: ${txHash}`);
+    console.log("=============================================")
 
     // Wait a moment and check if the transaction was confirmed
     let confirmed = false;
